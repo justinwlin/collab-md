@@ -8,6 +8,7 @@ defmodule CollabCli do
       ["history", code] -> cmd_history(code)
       ["restore", code, version] -> cmd_restore(code, version)
       ["status", code] -> cmd_status(code)
+      ["update"] -> cmd_update()
       _ -> usage()
     end
   end
@@ -161,6 +162,33 @@ defmodule CollabCli do
     end
   end
 
+  defp cmd_update do
+    IO.puts("==> Updating CollabMd CLI...")
+
+    install_dir = Path.join(System.get_env("HOME", "/tmp"), ".local/bin")
+    tmp_dir = Path.join(System.tmp_dir!(), "collab_md_update_#{System.unique_integer([:positive])}")
+
+    try do
+      {_, 0} = System.cmd("git", ["clone", "--depth", "1", "https://github.com/justinwlin/collab-md.git", tmp_dir],
+        stderr_to_stdout: true)
+      IO.puts("==> Fetched latest source")
+
+      cli_dir = Path.join(tmp_dir, "cli")
+      {_, 0} = System.cmd("mix", ["local.hex", "--force", "--if-missing"], cd: cli_dir, stderr_to_stdout: true)
+      {_, 0} = System.cmd("mix", ["deps.get"], cd: cli_dir, stderr_to_stdout: true)
+      {_, 0} = System.cmd("mix", ["escript.build"], cd: cli_dir, stderr_to_stdout: true)
+      IO.puts("==> Built new version")
+
+      File.mkdir_p!(install_dir)
+      File.cp!(Path.join(cli_dir, "collab_cli"), Path.join(install_dir, "collab"))
+      IO.puts("==> Updated #{Path.join(install_dir, "collab")}")
+    rescue
+      e -> IO.puts("Update failed: #{inspect(e)}")
+    after
+      File.rm_rf(tmp_dir)
+    end
+  end
+
   defp usage do
     IO.puts("""
     CollabMd CLI - Live collaborative markdown editing
@@ -171,6 +199,7 @@ defmodule CollabCli do
       collab history CODE                Show version history (snapshots)
       collab restore CODE VERSION        Restore a previous version
       collab status CODE                 Show room status and who's online
+      collab update                        Update to the latest version
 
     Options:
       --name NAME      Your display name (default: $USER)
