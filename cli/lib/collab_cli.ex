@@ -36,6 +36,18 @@ defmodule CollabCli do
         IO.puts("Room created: #{code}")
         IO.puts("Share this code: collab join #{code} --name <name>")
         IO.puts("")
+
+        # If --file points to an existing file with content, seed the room
+        if opts[:file] && File.exists?(opts[:file]) do
+          case File.read(opts[:file]) do
+            {:ok, content} when content != "" ->
+              IO.puts("[collab] Uploading existing file to room...")
+              Req.put("#{server_url()}/api/rooms/#{code}/document",
+                json: %{"document" => content, "author" => opts.name})
+            _ -> :ok
+          end
+        end
+
         join_args = ["--name", opts.name]
         join_args = if opts[:file], do: join_args ++ ["--file", opts[:file]], else: join_args
         cmd_join(code, join_args)
