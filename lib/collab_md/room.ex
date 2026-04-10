@@ -82,6 +82,7 @@ defmodule CollabMd.Room do
       code: code,
       document: "",
       versions: [],
+      version_count: 0,
       users: MapSet.new(),
       created_at: DateTime.utc_now(),
       idle_timer: schedule_timeout(@default_timeout_ms)
@@ -97,7 +98,7 @@ defmodule CollabMd.Room do
   end
 
   def handle_call({:update_document, content, author}, _from, state) do
-    new_version_number = next_version(state.versions)
+    new_version_number = state.version_count + 1
 
     # Snapshot records what the document becomes at this version number.
     snapshot = %{
@@ -113,6 +114,7 @@ defmodule CollabMd.Room do
       state
       |> Map.put(:document, content)
       |> Map.put(:versions, new_versions)
+      |> Map.put(:version_count, new_version_number)
       |> reset_timer(@default_timeout_ms)
 
     {:reply, {:ok, new_version_number}, state}
@@ -131,7 +133,7 @@ defmodule CollabMd.Room do
       version ->
         restored_content = version.content
 
-        new_version_number = next_version(state.versions)
+        new_version_number = state.version_count + 1
 
         # Snapshot records the restored content at the new version number.
         snapshot = %{
@@ -147,6 +149,7 @@ defmodule CollabMd.Room do
           state
           |> Map.put(:document, restored_content)
           |> Map.put(:versions, new_versions)
+          |> Map.put(:version_count, new_version_number)
           |> reset_timer(@default_timeout_ms)
 
         {:reply, {:ok, restored_content}, state}
@@ -167,7 +170,7 @@ defmodule CollabMd.Room do
   def handle_call(:status, _from, state) do
     result = %{
       users: MapSet.to_list(state.users),
-      version: length(state.versions),
+      version: state.version_count,
       created_at: state.created_at
     }
 
@@ -214,6 +217,4 @@ defmodule CollabMd.Room do
     %{state | idle_timer: new_ref}
   end
 
-  # Version numbers are 1-based. The next number is list length + 1.
-  defp next_version(versions), do: length(versions) + 1
 end
