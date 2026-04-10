@@ -1,6 +1,6 @@
 # CollabMd
 
-Real-time collaborative markdown editing from any editor. Create a room, share the code, and edit together — changes sync instantly via diff patches over WebSockets.
+Real-time collaborative markdown editing from any editor. Create a room, share the code, and edit together — concurrent edits merge automatically via CRDT.
 
 ## Quick Start
 
@@ -47,13 +47,33 @@ collabmd uninstall
 
 Edit the synced file with any editor (VS Code, vim, nano, etc). Changes propagate instantly to all connected users.
 
+### Sync Modes
+
+```sh
+# Default: CRDT auto-merge — concurrent edits from multiple users merge automatically
+collabmd join abc123 --name alice --mode crdt
+
+# Overwrite mode — last save wins (simpler, no merging)
+collabmd join abc123 --name alice --mode overwrite
+```
+
+Both modes create version snapshots on every edit. Use `collabmd history` and `collabmd restore` to roll back.
+
 ## Default Server
 
-The CLI points to the public server at `https://collab-md.fly.dev` by default. This is free to use for quick collaboration sessions.
+The CLI connects to **`https://collab-md.fly.dev`** by default. This is a free public server for quick collaboration sessions.
 
-Rooms are ephemeral — they auto-delete after 4 hours of inactivity (or 30 minutes after the last person leaves). There is no persistence or authentication.
+### What you should know
 
-To use a different server, pass `--server` or set the environment variable:
+- **No authentication** — anyone with a room code can join and edit. Room codes are random 6-character hex strings (16 million possibilities), so they're not guessable, but treat them like a shared link.
+- **No persistence** — rooms auto-delete after 4 hours of inactivity (or 30 minutes after the last person leaves). Nothing is stored permanently.
+- **No encryption** — content is transmitted over TLS (HTTPS/WSS) but the server can see room contents in memory. Don't use it for secrets or sensitive data.
+- **Resource limits** — the server runs on a 256MB Fly.io instance with a 1000 connection limit. It's meant for small-team collaboration, not heavy production use.
+- **Content is ephemeral** — there's no logging, no database, no disk storage. When a room closes, the content is gone.
+
+### For private or sensitive work, self-host
+
+If you need privacy, authentication, or higher limits, self-host your own server (see below) and point the CLI at it:
 
 ```sh
 # Per-command
@@ -61,7 +81,6 @@ collabmd create --name alice --server https://your-server.com
 
 # Or set globally
 export COLLAB_SERVER=https://your-server.com
-collabmd create --name alice
 ```
 
 ## Self-Hosting
@@ -152,11 +171,11 @@ curl https://your-server.com/api/rooms/CODE/status
 
 ## How It Works
 
-1. **File watchers** (FSEvents on macOS, inotify on Linux) detect local edits instantly
-2. **Line-based diffs** are computed and sent as patches over WebSocket
-3. The server applies the patch, increments the version, and broadcasts to other clients
-4. If two users edit at the same time and versions conflict, the server rejects the stale patch and sends the current document for resync
-5. Every edit creates a version snapshot that can be viewed or restored
+1. **File watchers** (FSEvents on macOS, inotify on Linux) detect local edits instantly — no polling
+2. **CRDT sync** (Yjs) — edits are encoded as CRDT operations and sent over WebSocket. Concurrent edits from multiple users merge automatically without conflicts
+3. The server is a **thin relay** — it stores and broadcasts binary CRDT updates without needing to understand them. Plain text is maintained alongside for the REST API
+4. Every edit creates a **version snapshot** that can be viewed with `collabmd history` or rolled back with `collabmd restore`
+5. **Overwrite mode** (`--mode overwrite`) is available as an alternative — sends the full document on each save, last write wins
 
 ## Development
 
