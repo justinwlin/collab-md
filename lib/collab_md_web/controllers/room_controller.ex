@@ -6,7 +6,7 @@ defmodule CollabMdWeb.RoomController do
   def create(conn, _params) do
     ip = conn.remote_ip |> :inet.ntoa() |> to_string()
 
-    with :ok <- RateLimiter.check_rate({:room_create, ip}, 30, 60),
+    with :ok <- RateLimiter.check_rate({:room_create, ip}, 120, 60),
          {:ok, code} <- RoomSupervisor.create_room() do
       conn |> put_status(:created) |> json(%{code: code})
     else
