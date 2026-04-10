@@ -165,19 +165,48 @@ defmodule CollabCli do
     IO.puts("""
     CollabMd CLI - Live collaborative markdown editing
 
-    Usage:
-      collab create [--name NAME]              Create a room and start syncing
-      collab join CODE [--name NAME]           Join an existing room
-      collab history CODE                      Show version history
-      collab restore CODE VERSION              Restore a previous version
-      collab status CODE                       Show room status
+    Commands:
+      collab create [options]            Create a new room and start syncing
+      collab join CODE [options]         Join an existing room
+      collab history CODE                Show version history (snapshots)
+      collab restore CODE VERSION        Restore a previous version
+      collab status CODE                 Show room status and who's online
 
     Options:
       --name NAME      Your display name (default: $USER)
-      --file PATH      Local file path (default: collab-CODE.md)
+      --file PATH      Path to a local markdown file (default: ./collab-CODE.md)
 
     Environment:
       COLLAB_SERVER    Server URL (default: https://collab-md.fly.dev)
+
+    How it works:
+      When you create or join a room, a local markdown file is created (or linked
+      via --file). Any edits you make to that file are synced to everyone in the
+      room in real-time. You can use any editor — VS Code, vim, nano, etc.
+
+      Every save creates an automatic version snapshot. Use 'history' to see all
+      versions and 'restore' to roll back. Snapshots are ephemeral — they are
+      discarded when the room closes (4hr idle or 30min after last person leaves).
+
+    Using --file with an existing markdown file:
+      You can point --file at an existing .md file. On join, the server's current
+      document overwrites the local file (it does not merge). So if you want to
+      seed a room with your existing content, use 'create' with --file — your
+      first save will upload it to the room for others to see.
+
+    Examples:
+      collab create --name alice                     # Create room, sync to ./collab-CODE.md
+      collab create --name alice --file notes.md     # Create room, sync to existing file
+      collab join abc123 --name bob                  # Join room, sync to ./collab-abc123.md
+      collab join abc123 --name bob --file notes.md  # Join room, sync to specific file
+      collab history abc123                          # List all version snapshots
+      collab restore abc123 2                        # Roll back to version 2
+
+    Programmatic access (curl, Claude Code, scripts):
+      curl https://collab-md.fly.dev/api/rooms/CODE/document
+      curl -X PUT https://collab-md.fly.dev/api/rooms/CODE/document \\
+        -H 'Content-Type: application/json' \\
+        -d '{"document": "# content", "author": "claude"}'
     """)
   end
 end
