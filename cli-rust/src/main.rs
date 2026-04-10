@@ -7,7 +7,23 @@ mod phoenix;
 mod sync;
 
 #[derive(Parser)]
-#[command(name = "collabmd", about = "Live collaborative markdown editing", version)]
+#[command(name = "collabmd", version, about = "Live collaborative markdown editing", long_about = "\
+Live collaborative markdown editing from any editor.\n\
+\n\
+Humans can edit via CLI (any editor) or browser. AI agents can edit via REST API.\n\
+All participants share the same room — concurrent edits merge automatically via CRDT.\n\
+\n\
+Agent/API usage:\n\
+  Create room:    curl -X POST https://collab-md.fly.dev/api/rooms\n\
+  Get document:   curl https://collab-md.fly.dev/api/rooms/CODE/document\n\
+  Update doc:     curl -X PUT https://collab-md.fly.dev/api/rooms/CODE/document \\\n\
+                    -H 'Content-Type: application/json' \\\n\
+                    -d '{\"document\": \"# Hello\", \"author\": \"claude\"}'\n\
+  Version history: curl https://collab-md.fly.dev/api/rooms/CODE/versions\n\
+  Restore version: curl -X PUT https://collab-md.fly.dev/api/rooms/CODE/restore/1\n\
+\n\
+Web editor:  https://collab-md.fly.dev/rooms/CODE\n\
+Env var:     COLLAB_SERVER=https://your-server.com")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -160,8 +176,15 @@ async fn cmd_create(
         .as_str()
         .ok_or("Invalid response: missing code")?;
 
+    let web_url = format!(
+        "{}/rooms/{}",
+        server.replace("wss://", "https://").replace("ws://", "http://"),
+        code
+    );
     eprintln!("Room created: {}", code);
-    eprintln!("Share this code: collabmd join {} --name <name>", code);
+    eprintln!("  CLI:     collabmd join {} --name <name>", code);
+    eprintln!("  Browser: {}", web_url);
+    eprintln!("  API:     curl {}/api/rooms/{}/document", server, code);
     eprintln!();
 
     // Seed room with existing file content

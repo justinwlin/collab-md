@@ -5,6 +5,16 @@ defmodule CollabMdWeb.Router do
     plug :accepts, ["json"]
   end
 
+  pipeline :browser do
+    plug :accepts, ["html"]
+  end
+
+  scope "/", CollabMdWeb do
+    pipe_through :browser
+
+    get "/rooms/:code", RoomPageController, :show
+  end
+
   scope "/api", CollabMdWeb do
     pipe_through :api
 

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CollabMd</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+  #status-bar { display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460; font-size: 13px; flex-shrink: 0; }
+  #status-bar .room-code { font-family: monospace; font-size: 14px; font-weight: 600; color: #e94560; cursor: pointer; }
+  #status-bar .room-code:hover { text-decoration: underline; }
+  #status-bar .separator { color: #333; }
+  #status-bar .users { color: #88c0d0; }
+  #status-bar .version { color: #666; }
+  #status-bar .share-url { margin-left: auto; font-size: 12px; color: #555; cursor: pointer; }
+  #status-bar .share-url:hover { color: #88c0d0; }
+  #status-bar .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e94560; }
+  #status-bar .status-dot.connected { background: #a3be8c; }
+  #copied-toast { position: fixed; top: 12px; right: 12px; background: #a3be8c; color: #1a1a2e; padding: 6px 14px; border-radius: 4px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 100; }
+  #copied-toast.show { opacity: 1; }
+  #editor-container { flex: 1; overflow: hidden; }
+  .cm-editor { height: 100%; }
+  .cm-editor .cm-scroller { overflow: auto; }
+  .cm-editor .cm-content { font-family: "JetBrains Mono", "Fira Code", "SF Mono", Consolas, monospace; font-size: 14px; line-height: 1.6; }
+  .cm-editor .cm-gutters { background: #16213e; border-right: 1px solid #0f3460; color: #444; }
+  .cm-editor .cm-activeLineGutter { background: #1a2744; }
+  .cm-editor .cm-activeLine { background: #1a2744; }
+  .yRemoteSelection { background-color: rgba(233, 69, 96, 0.3); }
+  .yRemoteSelectionHead { border-left: 2px solid #e94560; }
+  .yRemoteSelectionHead::after { content: attr(data-name); position: absolute; top: -1.4em; left: -1px; font-size: 10px; padding: 1px 4px; background: #e94560; color: white; border-radius: 3px; white-space: nowrap; font-family: sans-serif; }
+  #loading { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-size: 16px; }
+</style>
+</head>
+<body>
+
+<div id="status-bar">
+  <div class="status-dot" id="status-dot"></div>
+  <span class="room-code" id="room-code" title="Click to copy room code"></span>
+  <span class="separator">|</span>
+  <span class="users" id="users">connecting...</span>
+  <span class="separator">|</span>
+  <span class="version" id="version-display"></span>
+  <span class="share-url" id="share-url" title="Click to copy share URL">copy link</span>
+</div>
+<div id="copied-toast">Copied!</div>
+<div id="editor-container">
+  <div id="loading">Connecting...</div>
+</div>
+
+<script type="module">
+import { Socket } from "https://esm.sh/phoenix@1.7.18/assets/js/phoenix.mjs?bundle";
+import * as Y from "https://esm.sh/yjs@13.6.24";
+import { yCollab } from "https://esm.sh/y-codemirror.next@0.3.6?external=yjs,@codemirror/state,@codemirror/view";
+import { EditorView, basicSetup } from "https://esm.sh/codemirror@6.0.1?bundle";
+import { markdown } from "https://esm.sh/@codemirror/lang-markdown@6.3.1?bundle";
+import { oneDark } from "https://esm.sh/@codemirror/theme-one-dark@6.1.2?bundle";
+
+// Extract room code from URL path: /rooms/:code
+const pathParts = window.location.pathname.split("/");
+const roomCode = pathParts[pathParts.length - 1];
+if (!roomCode) { document.getElementById("loading").textContent = "No room code in URL"; throw new Error("no room code"); }
+
+document.getElementById("room-code").textContent = roomCode;
+document.title = `CollabMd - ${roomCode}`;
+
+// Username from query param or random
+const params = new URLSearchParams(window.location.search);
+const username = params.get("name") || "web-" + Math.random().toString(36).slice(2, 6);
+
+// Yjs doc
+const ydoc = new Y.Doc();
+const ytext = ydoc.getText("content");
+
+// State
+let currentVersion = 0;
+let isInitialized = false;
+
+// Phoenix socket
+const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+const socket = new Socket(`${wsProtocol}//${window.location.host}/socket`, { params: { username } });
+socket.connect();
+
+const channel = socket.channel(`room:${roomCode}`, { username });
+
+// Handle initial state
+channel.on("doc:state", (payload) => {
+  const { document: doc, version, crdt_updates } = payload;
+  currentVersion = version;
+  updateVersionDisplay();
+
+  if (crdt_updates && crdt_updates.length > 0) {
+    // Apply CRDT state
+    for (const b64 of crdt_updates) {
+      const update = base64ToBytes(b64);
+      Y.applyUpdate(ydoc, update);
+    }
+  } else if (doc) {
+    // No CRDT state — initialize from plain text
+    ydoc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, doc);
+    });
+  }
+
+  // Send our initial CRDT state to establish baseline
+  const state = Y.encodeStateAsUpdate(ydoc);
+  channel.push("doc:crdt_update", {
+    update: bytesToBase64(state),
+    text: ytext.toString(),
+    author: username
+  });
+
+  if (!isInitialized) {
+    isInitialized = true;
+    initEditor();
+  }
+
+  document.getElementById("status-dot").classList.add("connected");
+  document.getElementById("users").textContent = username;
+});
+
+// Handle CRDT updates from other users
+channel.on("doc:crdt_update", (payload) => {
+  const update = base64ToBytes(payload.update);
+  Y.applyUpdate(ydoc, update);
+  currentVersion = payload.version;
+  updateVersionDisplay();
+});
+
+// Handle full doc updates (from REST API)
+channel.on("doc:change", (payload) => {
+  currentVersion = payload.version;
+  updateVersionDisplay();
+  ydoc.transact(() => {
+    ytext.delete(0, ytext.length);
+    ytext.insert(0, payload.document);
+  });
+});
+
+// Handle user events
+channel.on("user:joined", (payload) => {
+  document.getElementById("users").textContent = payload.users.join(", ");
+});
+channel.on("user:left", (payload) => {
+  document.getElementById("users").textContent = payload.users.join(", ") || username;
+});
+
+// Send local CRDT updates to server
+ydoc.on("update", (update, origin) => {
+  if (origin === "remote") return;
+  if (!isInitialized) return;
+  channel.push("doc:crdt_update", {
+    update: bytesToBase64(update),
+    text: ytext.toString(),
+    author: username
+  });
+});
+
+// Join
+channel.join()
+  .receive("ok", () => console.log("joined room:", roomCode))
+  .receive("error", (resp) => {
+    document.getElementById("loading").textContent = `Error: ${resp.reason || "could not join room"}`;
+  });
+
+// Editor setup
+function initEditor() {
+  document.getElementById("loading").remove();
+
+  const awareness = new (class {
+    constructor() { this.states = new Map(); this.on = () => {}; this.off = () => {}; this.setLocalStateField = () => {}; this.getLocalState = () => ({}); this.getStates = () => this.states; this.destroy = () => {}; }
+  })();
+
+  new EditorView({
+    parent: document.getElementById("editor-container"),
+    extensions: [
+      basicSetup,
+      markdown(),
+      oneDark,
+      yCollab(ytext, awareness),
+      EditorView.theme({
+        "&": { height: "100%" },
+        ".cm-scroller": { overflow: "auto" },
+      }),
+    ],
+  });
+}
+
+// Helpers
+function bytesToBase64(bytes) {
+  const binString = Array.from(bytes, (b) => String.fromCodePoint(b)).join("");
+  return btoa(binString);
+}
+function base64ToBytes(b64) {
+  const binString = atob(b64);
+  return Uint8Array.from(binString, (c) => c.codePointAt(0));
+}
+function updateVersionDisplay() {
+  document.getElementById("version-display").textContent = `v${currentVersion}`;
+}
+
+// Copy actions
+document.getElementById("room-code").addEventListener("click", () => copyToClipboard(roomCode));
+document.getElementById("share-url").addEventListener("click", () => copyToClipboard(window.location.href));
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text);
+  const toast = document.getElementById("copied-toast");
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 1500);
+}
+</script>
+</body>
+</html>
