@@ -1,7 +1,11 @@
 defmodule CollabMdWeb.RoomChannel do
   use CollabMdWeb, :channel
 
-  alias CollabMd.{Room, RoomSupervisor}
+  alias CollabMd.{RateLimiter, Room, RoomSupervisor}
+
+  # Max 60 document updates per minute per user
+  @update_limit 60
+  @update_window 60
 
   @impl true
   def join("room:" <> code, %{"username" => username}, socket) do
@@ -40,30 +44,34 @@ defmodule CollabMdWeb.RoomChannel do
 
   @impl true
   def handle_in("doc:update", %{"document" => content, "author" => author}, socket) do
-    code = socket.assigns.code
-    {:ok, version} = Room.update_document(code, content, author)
+    with :ok <- check_update_rate(socket) do
+      code = socket.assigns.code
+      {:ok, version} = Room.update_document(code, content, author)
 
-    broadcast_from!(socket, "doc:change", %{
-      "document" => content,
-      "author" => author,
-      "version" => version
-    })
+      broadcast_from!(socket, "doc:change", %{
+        "document" => content,
+        "author" => author,
+        "version" => version
+      })
 
-    {:reply, {:ok, %{"version" => version}}, socket}
+      {:reply, {:ok, %{"version" => version}}, socket}
+    end
   end
 
   def handle_in("doc:crdt_update", %{"update" => update_b64, "text" => text, "author" => author}, socket) do
-    code = socket.assigns.code
-    update_binary = Base.decode64!(update_b64)
-    {:ok, version} = Room.apply_crdt_update(code, update_binary, text, author)
+    with :ok <- check_update_rate(socket) do
+      code = socket.assigns.code
+      update_binary = Base.decode64!(update_b64)
+      {:ok, version} = Room.apply_crdt_update(code, update_binary, text, author)
 
-    broadcast_from!(socket, "doc:crdt_update", %{
-      "update" => update_b64,
-      "author" => author,
-      "version" => version
-    })
+      broadcast_from!(socket, "doc:crdt_update", %{
+        "update" => update_b64,
+        "author" => author,
+        "version" => version
+      })
 
-    {:reply, {:ok, %{"version" => version}}, socket}
+      {:reply, {:ok, %{"version" => version}}, socket}
+    end
   end
 
   def handle_in("doc:patch", %{"ops" => ops, "author" => author, "base_version" => base_version}, socket) do
@@ -111,5 +119,14 @@ defmodule CollabMdWeb.RoomChannel do
     end
 
     :ok
+  end
+
+  defp check_update_rate(socket) do
+    key = {:channel_update, socket.assigns.code, socket.assigns.username}
+
+    case RateLimiter.check_rate(key, @update_limit, @update_window) do
+      :ok -> :ok
+      {:error, :rate_limited} -> {:reply, {:error, %{"reason" => "rate_limited"}}, socket}
+    end
   end
 end

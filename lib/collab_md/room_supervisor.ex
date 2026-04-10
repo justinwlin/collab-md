@@ -21,11 +21,23 @@ defmodule CollabMd.RoomSupervisor do
   Generates a unique 6-character hex room code, starts a supervised Room
   process for it, and returns `{:ok, code}`.
   """
-  @spec create_room() :: {:ok, String.t()}
+  @max_rooms 200
+
+  @spec create_room() :: {:ok, String.t()} | {:error, :room_limit_reached}
   def create_room do
-    code = :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
-    {:ok, _pid} = DynamicSupervisor.start_child(__MODULE__, {CollabMd.Room, %{code: code}})
-    {:ok, code}
+    if room_count() >= @max_rooms do
+      {:error, :room_limit_reached}
+    else
+      code = :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
+      {:ok, _pid} = DynamicSupervisor.start_child(__MODULE__, {CollabMd.Room, %{code: code}})
+      {:ok, code}
+    end
+  end
+
+  @doc "Returns the number of active rooms."
+  @spec room_count() :: non_neg_integer()
+  def room_count do
+    DynamicSupervisor.count_children(__MODULE__).active
   end
 
   @doc """

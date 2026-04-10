@@ -1,11 +1,21 @@
 defmodule CollabMdWeb.RoomController do
   use CollabMdWeb, :controller
 
-  alias CollabMd.{Room, RoomSupervisor}
+  alias CollabMd.{RateLimiter, Room, RoomSupervisor}
 
   def create(conn, _params) do
-    {:ok, code} = RoomSupervisor.create_room()
-    conn |> put_status(:created) |> json(%{code: code})
+    ip = conn.remote_ip |> :inet.ntoa() |> to_string()
+
+    with :ok <- RateLimiter.check_rate({:room_create, ip}, 10, 60),
+         {:ok, code} <- RoomSupervisor.create_room() do
+      conn |> put_status(:created) |> json(%{code: code})
+    else
+      {:error, :rate_limited} ->
+        conn |> put_status(429) |> json(%{error: "rate_limited", retry_after: 60})
+
+      {:error, :room_limit_reached} ->
+        conn |> put_status(503) |> json(%{error: "server_full"})
+    end
   end
 
   def get_document(conn, %{"code" => code}) do

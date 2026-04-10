@@ -9,6 +9,7 @@ defmodule CollabMd.Application do
   def start(_type, _args) do
     children = [
       CollabMdWeb.Telemetry,
+      CollabMd.RateLimiter,
       {Registry, keys: :unique, name: CollabMd.RoomRegistry},
       {CollabMd.RoomSupervisor, []},
       {Phoenix.PubSub, name: CollabMd.PubSub},
