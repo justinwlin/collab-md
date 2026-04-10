@@ -17,6 +17,7 @@ RUN mix deps.get --only $MIX_ENV && mix deps.compile
 
 COPY config/config.exs config/${MIX_ENV}.exs config/runtime.exs config/
 COPY lib lib
+COPY rel rel
 
 RUN mix compile && mix release
 
