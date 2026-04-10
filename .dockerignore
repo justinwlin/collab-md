@@ -1,0 +1,9 @@
+cli/
+.git/
+_build/
+deps/
+doc/
+test/
+.env
+*.md
+docs/
