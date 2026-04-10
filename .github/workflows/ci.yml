@@ -21,7 +21,7 @@ jobs:
     name: Elixir tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: erlef/setup-beam@v1
         with:
@@ -29,7 +29,7 @@ jobs:
           otp-version: '27'
 
       - name: Cache deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             deps
@@ -46,7 +46,7 @@ jobs:
       run:
         working-directory: cli-rust
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --lib
 
@@ -54,7 +54,7 @@ jobs:
     name: E2E integration tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: erlef/setup-beam@v1
         with:
@@ -64,7 +64,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Elixir deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             deps
@@ -72,7 +72,7 @@ jobs:
           key: elixir-${{ hashFiles('mix.lock') }}
 
       - name: Cache Rust build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: cli-rust/target
           key: rust-${{ hashFiles('cli-rust/Cargo.lock') }}
@@ -103,7 +103,7 @@ jobs:
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -152,7 +152,7 @@ jobs:
         working-directory: cli-rust
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.auto-release.outputs.tag }}
 
@@ -174,7 +174,7 @@ jobs:
       - name: Package binary
         run: cp target/${{ matrix.target }}/release/collabmd ../${{ matrix.binary }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.binary }}
           path: ${{ matrix.binary }}
@@ -186,7 +186,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
