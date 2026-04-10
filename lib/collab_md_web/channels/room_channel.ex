@@ -49,6 +49,33 @@ defmodule CollabMdWeb.RoomChannel do
     {:reply, {:ok, %{"version" => version}}, socket}
   end
 
+  def handle_in("doc:patch", %{"ops" => ops, "author" => author, "base_version" => base_version}, socket) do
+    code = socket.assigns.code
+
+    case Room.apply_patch(code, ops, author, base_version) do
+      {:ok, version} ->
+        broadcast_from!(socket, "doc:patch_broadcast", %{
+          "ops" => ops,
+          "author" => author,
+          "version" => version
+        })
+
+        {:reply, {:ok, %{"version" => version}}, socket}
+
+      {:error, :version_mismatch, current_doc, current_version} ->
+        {:reply,
+         {:ok,
+          %{
+            "version_mismatch" => true,
+            "document" => current_doc,
+            "version" => current_version
+          }}, socket}
+
+      {:error, reason} ->
+        {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
+    end
+  end
+
   @impl true
   def terminate(_reason, socket) do
     if Map.has_key?(socket.assigns, :code) do

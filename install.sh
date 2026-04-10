@@ -1,66 +1,109 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-# CollabMd CLI Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/justinwlin/collab-md/main/install.sh | bash
+#!/bin/sh
+# CollabMd CLI Installer — downloads a prebuilt binary. No dependencies needed.
+# Usage: curl -sSL https://raw.githubusercontent.com/justinwlin/collab-md/main/install.sh | sh
+set -e
 
 REPO="justinwlin/collab-md"
-INSTALL_DIR="${HOME}/.local/bin"
-TEMP_DIR=$(mktemp -d)
+INSTALL_DIR="${COLLAB_INSTALL_DIR:-$HOME/.local/bin}"
 
-cleanup() { rm -rf "$TEMP_DIR"; }
-trap cleanup EXIT
+# Detect OS
+OS="$(uname -s)"
+case "$OS" in
+    Linux)  OS="linux" ;;
+    Darwin) OS="darwin" ;;
+    *)
+        echo "Error: Unsupported OS: $OS"
+        echo "Only Linux and macOS are supported."
+        exit 1
+        ;;
+esac
 
-echo "==> Installing CollabMd CLI..."
+# Detect architecture
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64|amd64)    ARCH="x86_64" ;;
+    aarch64|arm64)   ARCH="aarch64" ;;
+    *)
+        echo "Error: Unsupported architecture: $ARCH"
+        echo "Only x86_64 and arm64/aarch64 are supported."
+        exit 1
+        ;;
+esac
 
-# Check for Elixir
-if ! command -v elixir &>/dev/null; then
-  echo "Error: Elixir is required but not installed."
-  echo "Install via: brew install elixir  (macOS)"
-  echo "         or: asdf install elixir latest"
-  exit 1
-fi
+BINARY="collab-${OS}-${ARCH}"
+URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
 
-if ! command -v mix &>/dev/null; then
-  echo "Error: mix not found. Ensure Elixir is properly installed."
-  exit 1
-fi
-
-# Clone just the cli directory
-echo "==> Fetching source..."
-git clone --depth 1 "https://github.com/${REPO}.git" "$TEMP_DIR/collab-md" 2>/dev/null
-
-# Build escript
-echo "==> Building CLI..."
-cd "$TEMP_DIR/collab-md/cli"
-mix local.hex --force --if-missing >/dev/null 2>&1
-mix deps.get --only prod >/dev/null 2>&1
-MIX_ENV=prod mix escript.build >/dev/null 2>&1
-
-# Install
+echo "==> Installing collab for ${OS}/${ARCH}..."
 mkdir -p "$INSTALL_DIR"
-cp collab_cli "$INSTALL_DIR/collab"
-chmod +x "$INSTALL_DIR/collab"
 
-echo ""
-echo "==> Installed to $INSTALL_DIR/collab"
-
-# Check PATH
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-  echo ""
-  echo "NOTE: $INSTALL_DIR is not in your PATH. Add it:"
-  echo ""
-  echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc"
-  echo "  source ~/.zshrc"
-  echo ""
+# Download binary
+if command -v curl >/dev/null 2>&1; then
+    HTTP_CODE=$(curl -sSL -w '%{http_code}' "$URL" -o "${INSTALL_DIR}/collab")
+    if [ "$HTTP_CODE" != "200" ]; then
+        rm -f "${INSTALL_DIR}/collab"
+        echo "Error: Download failed (HTTP $HTTP_CODE)"
+        echo "No release found. You can build from source instead:"
+        echo "  git clone https://github.com/${REPO}.git"
+        echo "  cd collab-md/cli-rust && cargo install --path ."
+        exit 1
+    fi
+elif command -v wget >/dev/null 2>&1; then
+    wget -q "$URL" -O "${INSTALL_DIR}/collab" || {
+        rm -f "${INSTALL_DIR}/collab"
+        echo "Error: Download failed."
+        echo "No release found. You can build from source:"
+        echo "  git clone https://github.com/${REPO}.git"
+        echo "  cd collab-md/cli-rust && cargo install --path ."
+        exit 1
+    }
+else
+    echo "Error: curl or wget is required to download the binary."
+    exit 1
 fi
 
-echo "==> Done! Usage:"
+chmod +x "${INSTALL_DIR}/collab"
+
+# Verify the binary runs
+if "${INSTALL_DIR}/collab" --version >/dev/null 2>&1; then
+    VERSION=$("${INSTALL_DIR}/collab" --version 2>/dev/null || echo "unknown")
+    echo "==> Installed: $VERSION"
+else
+    echo "==> Binary installed (could not verify version)"
+fi
+
+# Check if INSTALL_DIR is in PATH
+case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*)
+        echo "==> Ready! Run 'collab --help' to get started."
+        ;;
+    *)
+        echo ""
+        echo "==> Installed to ${INSTALL_DIR}/collab"
+        echo ""
+        echo "Add this directory to your PATH:"
+        echo ""
+        SHELL_NAME="$(basename "${SHELL:-/bin/sh}")"
+        case "$SHELL_NAME" in
+            zsh)
+                echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc"
+                echo "  source ~/.zshrc"
+                ;;
+            bash)
+                echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc"
+                echo "  source ~/.bashrc"
+                ;;
+            fish)
+                echo "  fish_add_path ~/.local/bin"
+                ;;
+            *)
+                echo "  echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.profile"
+                echo "  source ~/.profile"
+                ;;
+        esac
+        echo ""
+        echo "Then run: collab --help"
+        ;;
+esac
+
 echo ""
-echo "  collab create --name yourname          # Create a room"
-echo "  collab join CODE --name yourname       # Join a room"
-echo "  collab history CODE                    # View version history"
-echo "  collab restore CODE VERSION            # Restore a version"
-echo "  collab status CODE                     # Room status"
-echo ""
-echo "Set server: export COLLAB_SERVER=https://collab-md.fly.dev"
+echo "To uninstall: collab uninstall"

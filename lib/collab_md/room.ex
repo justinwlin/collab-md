@@ -54,6 +54,18 @@ defmodule CollabMd.Room do
     GenServer.call(via(code), {:restore_version, number})
   end
 
+  @doc """
+  Applies a diff patch to the current document, but only if base_version matches.
+  Returns {:ok, new_version} or {:error, :version_mismatch, current_doc, current_version}.
+  """
+  @spec apply_patch(String.t(), list(map()), String.t(), non_neg_integer()) ::
+          {:ok, non_neg_integer()}
+          | {:error, :version_mismatch, String.t(), non_neg_integer()}
+          | {:error, atom()}
+  def apply_patch(code, ops, author, base_version) do
+    GenServer.call(via(code), {:apply_patch, ops, author, base_version})
+  end
+
   @doc "Adds a user to the room's connected-user set."
   @spec join(String.t(), String.t()) :: :ok
   def join(code, username) do
@@ -153,6 +165,36 @@ defmodule CollabMd.Room do
           |> reset_timer(@default_timeout_ms)
 
         {:reply, {:ok, restored_content}, state}
+    end
+  end
+
+  def handle_call({:apply_patch, ops, author, base_version}, _from, state) do
+    if base_version != state.version_count do
+      {:reply, {:error, :version_mismatch, state.document, state.version_count}, state}
+    else
+      case CollabMd.Patch.apply(state.document, ops) do
+        {:ok, new_content} ->
+          new_version_number = state.version_count + 1
+
+          snapshot = %{
+            number: new_version_number,
+            content: new_content,
+            author: author,
+            timestamp: DateTime.utc_now()
+          }
+
+          state =
+            state
+            |> Map.put(:document, new_content)
+            |> Map.put(:versions, [snapshot | state.versions])
+            |> Map.put(:version_count, new_version_number)
+            |> reset_timer(@default_timeout_ms)
+
+          {:reply, {:ok, new_version_number}, state}
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
     end
   end
 

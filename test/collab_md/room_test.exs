@@ -136,6 +136,74 @@ defmodule CollabMd.RoomTest do
     end
   end
 
+  describe "apply_patch/4" do
+    test "applies a valid patch and returns new version", %{code: code} do
+      Room.update_document(code, "line 1\nline 2\n", "setup")
+
+      ops = [
+        %{"op" => "equal", "content" => "line 1\n"},
+        %{"op" => "delete", "content" => "line 2\n"},
+        %{"op" => "insert", "content" => "modified line 2\n"}
+      ]
+
+      assert {:ok, 2} = Room.apply_patch(code, ops, "alice", 1)
+      assert {:ok, "line 1\nmodified line 2\n"} = Room.get_document(code)
+    end
+
+    test "creates a version snapshot", %{code: code} do
+      Room.update_document(code, "original\n", "setup")
+      ops = [
+        %{"op" => "delete", "content" => "original\n"},
+        %{"op" => "insert", "content" => "patched\n"}
+      ]
+
+      Room.apply_patch(code, ops, "alice", 1)
+      {:ok, versions} = Room.get_versions(code)
+      assert length(versions) == 2
+      [latest | _] = versions
+      assert latest.number == 2
+      assert latest.author == "alice"
+    end
+
+    test "rejects patch when base_version mismatches", %{code: code} do
+      Room.update_document(code, "v1", "setup")
+      Room.update_document(code, "v2", "setup")
+
+      ops = [%{"op" => "delete", "content" => "v1"}, %{"op" => "insert", "content" => "v1-patched"}]
+
+      assert {:error, :version_mismatch, "v2", 2} = Room.apply_patch(code, ops, "alice", 1)
+    end
+
+    test "version mismatch returns current document and version", %{code: code} do
+      Room.update_document(code, "current content", "setup")
+
+      ops = [%{"op" => "equal", "content" => "stale"}]
+      {:error, :version_mismatch, doc, version} = Room.apply_patch(code, ops, "alice", 0)
+
+      assert doc == "current content"
+      assert version == 1
+    end
+
+    test "rejects patch with mismatched content", %{code: code} do
+      Room.update_document(code, "actual content\n", "setup")
+
+      ops = [%{"op" => "equal", "content" => "wrong content\n"}]
+      assert {:error, :mismatch} = Room.apply_patch(code, ops, "alice", 1)
+    end
+
+    test "sequential patches increment version correctly", %{code: code} do
+      Room.update_document(code, "v0\n", "setup")
+
+      ops1 = [%{"op" => "equal", "content" => "v0\n"}, %{"op" => "insert", "content" => "A\n"}]
+      assert {:ok, 2} = Room.apply_patch(code, ops1, "alice", 1)
+
+      ops2 = [%{"op" => "equal", "content" => "v0\nA\n"}, %{"op" => "insert", "content" => "B\n"}]
+      assert {:ok, 3} = Room.apply_patch(code, ops2, "alice", 2)
+
+      assert {:ok, "v0\nA\nB\n"} = Room.get_document(code)
+    end
+  end
+
   describe "status/1" do
     test "returns created_at timestamp", %{code: code} do
       {:ok, %{created_at: created_at}} = Room.status(code)
