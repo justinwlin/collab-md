@@ -36,7 +36,9 @@ defmodule CollabCli do
         IO.puts("Room created: #{code}")
         IO.puts("Share this code: collab join #{code} --name <name>")
         IO.puts("")
-        cmd_join(code, ["--name", opts.name])
+        join_args = ["--name", opts.name]
+        join_args = if opts[:file], do: join_args ++ ["--file", opts[:file]], else: join_args
+        cmd_join(code, join_args)
 
       {:error, reason} ->
         IO.puts("Error creating room: #{inspect(reason)}")
