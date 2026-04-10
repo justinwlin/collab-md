@@ -47,6 +47,15 @@ collabmd uninstall
 
 Edit the synced file with any editor (VS Code, vim, nano, etc). Changes propagate instantly to all connected users.
 
+### How Sessions Work
+
+The CLI stays running while you're in a room — it holds the WebSocket connection and file watcher. Edit your file normally in any editor, and changes sync in the background. Ctrl+C to leave.
+
+- **Room = the code, not the creator.** If Alice creates a room and leaves, Bob keeps working. Alice can rejoin later with the same code.
+- **Rooms stay alive** as long as at least one person is connected. When the last person leaves, a 30-minute countdown starts. If nobody rejoins, the room is deleted.
+- **Idle timeout** — rooms with no edits for 4 hours are cleaned up automatically.
+- **Silence logs** — run with `2>/dev/null` to suppress status messages, or background it with `&`.
+
 ### Sync Modes
 
 ```sh
