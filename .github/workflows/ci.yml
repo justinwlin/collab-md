@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-elixir:
+    name: Elixir tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.17'
+          otp-version: '27'
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: elixir-${{ hashFiles('mix.lock') }}
+
+      - run: mix deps.get
+      - run: mix test
+
+  test-rust:
+    name: Rust unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli-rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --lib
+
+  test-e2e:
+    name: E2E integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.17'
+          otp-version: '27'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Elixir deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: elixir-${{ hashFiles('mix.lock') }}
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: cli-rust/target
+          key: rust-${{ hashFiles('cli-rust/Cargo.lock') }}
+
+      - name: Install Elixir deps
+        run: mix deps.get
+
+      - name: Start Phoenix server
+        run: |
+          mix phx.server &
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null -X POST http://localhost:4000/api/rooms && break
+            sleep 1
+          done
+
+      - name: Run E2E tests
+        working-directory: cli-rust
+        run: COLLAB_TEST_SERVER=http://localhost:4000 cargo test --test e2e -- --nocapture
+
+  auto-release:
+    name: Auto-release
+    needs: [test-elixir, test-rust, test-e2e]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get next version
+        id: version
+        run: |
+          LATEST=$(git tag --sort=-v:refname | grep '^v' | head -1)
+          if [ -z "$LATEST" ]; then
+            echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
+          else
+            # Bump patch version: v0.1.0 -> v0.1.1
+            MAJOR=$(echo "$LATEST" | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | cut -d. -f3)
+            NEXT_PATCH=$((PATCH + 1))
+            echo "tag=${MAJOR}.${MINOR}.${NEXT_PATCH}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag
+        run: |
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin ${{ steps.version.outputs.tag }}
