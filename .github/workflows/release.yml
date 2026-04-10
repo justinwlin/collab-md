@@ -1,17 +1,14 @@
-name: Release CLI
+name: Release CLI (manual)
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to release'
-        required: true
 
 jobs:
   build:
+    # Skip if the CI workflow already created this release
+    if: github.event.head_commit.message != ''
     strategy:
       matrix:
         include:
@@ -35,8 +32,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -54,7 +49,7 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Package binary
-        run: cp target/${{ matrix.target }}/release/collabmdmd ../${{ matrix.binary }}
+        run: cp target/${{ matrix.target }}/release/collabmd ../${{ matrix.binary }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -80,6 +75,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
           generate_release_notes: true
           files: release/*

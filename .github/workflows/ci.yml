@@ -82,6 +82,7 @@ jobs:
         working-directory: cli-rust
         run: COLLAB_TEST_SERVER=http://localhost:4000 cargo test --test e2e -- --nocapture
 
+  # On green main: tag, build binaries, publish release — all in one workflow
   auto-release:
     name: Auto-release
     needs: [test-elixir, test-rust, test-e2e]
@@ -89,6 +90,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,7 +104,6 @@ jobs:
           if [ -z "$LATEST" ]; then
             echo "tag=v0.1.0" >> "$GITHUB_OUTPUT"
           else
-            # Bump patch version: v0.1.0 -> v0.1.1
             MAJOR=$(echo "$LATEST" | cut -d. -f1)
             MINOR=$(echo "$LATEST" | cut -d. -f2)
             PATCH=$(echo "$LATEST" | cut -d. -f3)
@@ -114,7 +116,79 @@ jobs:
           git tag ${{ steps.version.outputs.tag }}
           git push origin ${{ steps.version.outputs.tag }}
 
-      - name: Trigger release build
-        run: gh workflow run release.yml -f tag=${{ steps.version.outputs.tag }}
+  build:
+    name: Build (${{ matrix.binary }})
+    needs: auto-release
+    if: needs.auto-release.outputs.tag != ''
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: collabmd-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: collabmd-linux-aarch64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            binary: collabmd-darwin-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            binary: collabmd-darwin-aarch64
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: cli-rust
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.auto-release.outputs.tag }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package binary
+        run: cp target/${{ matrix.target }}/release/collabmd ../${{ matrix.binary }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: ${{ matrix.binary }}
+
+  publish-release:
+    name: Publish release
+    needs: [auto-release, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f -name 'collabmd-*' -exec cp {} release/ \;
+          chmod +x release/*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.auto-release.outputs.tag }}
+          generate_release_notes: true
+          files: release/*
