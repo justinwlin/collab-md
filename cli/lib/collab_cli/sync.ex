@@ -1,6 +1,8 @@
 defmodule CollabCli.Sync do
   use GenServer
 
+  @poll_interval 500
+
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -12,53 +14,62 @@ defmodule CollabCli.Sync do
   @impl true
   def init(opts) do
     file_path = opts[:file_path]
-    File.write!(file_path, opts[:initial_content] || "")
+    initial = opts[:initial_content] || ""
+    File.write!(file_path, initial)
 
-    {:ok, watcher_pid} = FileSystem.start_link(dirs: [Path.dirname(file_path)])
-    FileSystem.subscribe(watcher_pid)
+    schedule_poll()
 
     {:ok,
      %{
        file_path: file_path,
        username: opts[:username],
        channel_pid: opts[:channel_pid],
-       watcher_pid: watcher_pid,
-       last_content: opts[:initial_content] || "",
-       skip_next_write: false
+       last_content: initial,
+       last_mtime: file_mtime(file_path),
+       skip_next_poll: false
      }}
   end
 
   @impl true
-  def handle_info({:file_event, _pid, {path, events}}, state) do
-    if Path.basename(path) == Path.basename(state.file_path) and :modified in events do
-      if state.skip_next_write do
-        {:noreply, %{state | skip_next_write: false}}
-      else
+  def handle_info(:poll, state) do
+    schedule_poll()
+
+    if state.skip_next_poll do
+      {:noreply, %{state | skip_next_poll: false}}
+    else
+      mtime = file_mtime(state.file_path)
+
+      if mtime != state.last_mtime do
         case File.read(state.file_path) do
           {:ok, content} when content != state.last_content ->
             CollabCli.ChannelClient.send_update(state.channel_pid, content, state.username)
-            {:noreply, %{state | last_content: content}}
+            {:noreply, %{state | last_content: content, last_mtime: mtime}}
 
           _ ->
-            {:noreply, state}
+            {:noreply, %{state | last_mtime: mtime}}
         end
+      else
+        {:noreply, state}
       end
-    else
-      {:noreply, state}
     end
-  end
-
-  def handle_info({:file_event, _pid, :stop}, state) do
-    {:noreply, state}
   end
 
   @impl true
   def handle_cast({:remote_update, content}, state) do
     if content != state.last_content do
       File.write!(state.file_path, content)
-      {:noreply, %{state | last_content: content, skip_next_write: true}}
+      {:noreply, %{state | last_content: content, last_mtime: file_mtime(state.file_path), skip_next_poll: true}}
     else
       {:noreply, state}
+    end
+  end
+
+  defp schedule_poll, do: Process.send_after(self(), :poll, @poll_interval)
+
+  defp file_mtime(path) do
+    case File.stat(path) do
+      {:ok, %{mtime: mtime}} -> mtime
+      _ -> nil
     end
   end
 end

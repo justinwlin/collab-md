@@ -28,18 +28,9 @@ defmodule CollabCli.ChannelClient do
 
   @impl true
   def handle_connect(_conn, state) do
-    ref = state.ref + 1
-
-    join_msg =
-      Jason.encode!(%{
-        topic: state.topic,
-        event: "phx_join",
-        payload: %{username: state.username},
-        ref: to_string(ref)
-      })
-
+    send(self(), :join_channel)
     Process.send_after(self(), :heartbeat, @heartbeat_interval)
-    {:reply, {:text, join_msg}, %{state | ref: ref, join_ref: to_string(ref)}}
+    {:ok, state}
   end
 
   @impl true
@@ -86,6 +77,20 @@ defmodule CollabCli.ChannelClient do
   end
 
   @impl true
+  def handle_info(:join_channel, state) do
+    ref = state.ref + 1
+
+    join_msg =
+      Jason.encode!(%{
+        topic: state.topic,
+        event: "phx_join",
+        payload: %{username: state.username},
+        ref: to_string(ref)
+      })
+
+    {:reply, {:text, join_msg}, %{state | ref: ref, join_ref: to_string(ref)}}
+  end
+
   def handle_info(:heartbeat, state) do
     ref = state.ref + 1
 

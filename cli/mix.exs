@@ -20,7 +20,6 @@ defmodule CollabCli.MixProject do
     [
       {:websockex, "~> 0.4.3"},
       {:jason, "~> 1.4"},
-      {:file_system, "~> 1.0"},
       {:req, "~> 0.5"}
     ]
   end
