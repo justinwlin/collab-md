@@ -6,7 +6,6 @@
 //! Run with: ./test_e2e.sh (starts server automatically)
 //! Or manually: cargo test --test e2e -- --nocapture
 
-use base64::prelude::*;
 use collab::crdt::CrdtDoc;
 use collab::patch::{apply_patch, compute_patch};
 use collab::phoenix::{ChannelEvent, PhoenixChannel};
@@ -476,15 +475,23 @@ async fn test_sync_engine_local_edit_propagates() {
         collab::sync::run(fp, "sync-tester".to_string(), channel, events, true).await
     });
 
-    // Wait for sync to write initial file
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    assert_eq!(content, "initial\n", "Sync should write initial content to file");
+    // Wait for sync to write initial file (CI runners may be slow)
+    let mut file_ready = false;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+            if content == "initial\n" {
+                file_ready = true;
+                break;
+            }
+        }
+    }
+    assert!(file_ready, "Sync should write initial content to file");
 
     // Edit the local file
     tokio::fs::write(&file_path, "initial\nedited locally\n").await.unwrap();
 
-    // Poll server until the change propagates (CI runners can be slow)
+    // Poll server until the change propagates
     let expected = "initial\nedited locally\n";
     let mut propagated = false;
     for _ in 0..20 {
@@ -527,8 +534,15 @@ async fn test_sync_engine_remote_edit_updates_file() {
         collab::sync::run(fp, "sync-tester".to_string(), channel, events, true).await
     });
 
-    // Wait for initial sync
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for initial sync (CI runners may be slow)
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+            if content == "initial\n" {
+                break;
+            }
+        }
+    }
 
     // Update document via REST (simulates another user editing)
     client

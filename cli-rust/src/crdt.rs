@@ -10,11 +10,6 @@ pub struct CrdtDoc {
 }
 
 impl CrdtDoc {
-    /// Create an empty CRDT document.
-    pub fn new() -> Self {
-        CrdtDoc { doc: Doc::new() }
-    }
-
     /// Initialize from plain text (no CRDT history).
     pub fn from_text(text: &str) -> Self {
         let doc = Doc::new();
