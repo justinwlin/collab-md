@@ -138,8 +138,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_doc_is_empty() {
-        let doc = CrdtDoc::new();
+    fn test_empty_doc() {
+        let doc = CrdtDoc::from_text("");
         assert_eq!(doc.get_text(), "");
     }
 
@@ -222,8 +222,8 @@ mod tests {
     #[test]
     fn test_from_updates() {
         let doc1 = CrdtDoc::from_text("start");
-        let update1 = doc1.apply_local_change("start", "start middle");
-        let update2 = doc1.apply_local_change("start middle", "start middle end");
+        let _update1 = doc1.apply_local_change("start", "start middle");
+        let _update2 = doc1.apply_local_change("start middle", "start middle end");
 
         // New client initializes from accumulated updates
         let state = doc1.encode_state();

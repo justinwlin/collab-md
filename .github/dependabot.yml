@@ -1,25 +1,34 @@
 version: 2
 updates:
-  # GitHub Actions
+  # GitHub Actions — group all action bumps into one PR
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     commit-message:
       prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
 
-  # Rust (Cargo)
+  # Rust (Cargo) — group all crate bumps into one PR
   - package-ecosystem: "cargo"
     directory: "/cli-rust"
     schedule:
       interval: "weekly"
     commit-message:
       prefix: "deps"
+    groups:
+      cargo:
+        patterns: ["*"]
 
-  # Elixir (Hex)
+  # Elixir (Hex) — group all hex bumps into one PR
   - package-ecosystem: "mix"
     directory: "/"
     schedule:
       interval: "weekly"
     commit-message:
       prefix: "deps"
+    groups:
+      hex:
+        patterns: ["*"]
