@@ -142,7 +142,8 @@ impl PhoenixChannel {
         })
     }
 
-    /// Send a diff patch to the server (legacy, kept for compatibility).
+    /// Send a diff patch to the server (legacy, kept for backward compatibility).
+    #[allow(dead_code)]
     pub fn send_patch(
         &mut self,
         ops: &[PatchOp],

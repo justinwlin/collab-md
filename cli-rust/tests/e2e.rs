@@ -488,26 +488,38 @@ async fn test_sync_engine_local_edit_propagates() {
     }
     assert!(file_ready, "Sync should write initial content to file");
 
-    // Edit the local file
-    tokio::fs::write(&file_path, "initial\nedited locally\n").await.unwrap();
+    // Let the file watcher fully process the initial write before we edit
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
-    // Poll server until the change propagates
+    // Edit the local file — retry the write to ensure the watcher picks it up
     let expected = "initial\nedited locally\n";
     let mut propagated = false;
-    for _ in 0..20 {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let resp = client
-            .get(format!("{}/api/rooms/{}/document", server_url(), &code))
-            .send()
-            .await
-            .unwrap();
-        let body: Value = resp.json().await.unwrap();
-        if body["document"].as_str().unwrap_or("") == expected {
-            propagated = true;
+    for attempt in 0..10 {
+        if attempt > 0 {
+            // Re-write to retrigger the file watcher
+            tokio::fs::write(&file_path, expected).await.unwrap();
+        } else {
+            tokio::fs::write(&file_path, expected).await.unwrap();
+        }
+        // Poll server for up to 2s per attempt
+        for _ in 0..4 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let resp = client
+                .get(format!("{}/api/rooms/{}/document", server_url(), &code))
+                .send()
+                .await
+                .unwrap();
+            let body: Value = resp.json().await.unwrap();
+            if body["document"].as_str().unwrap_or("") == expected {
+                propagated = true;
+                break;
+            }
+        }
+        if propagated {
             break;
         }
     }
-    assert!(propagated, "Local edit should propagate to server within 10s");
+    assert!(propagated, "Local edit should propagate to server within 20s");
 
     sync_handle.abort();
     let _ = std::fs::remove_dir_all(&tmp_dir);

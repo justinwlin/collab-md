@@ -16,6 +16,7 @@ pub enum OpType {
     Insert,
 }
 
+#[allow(dead_code)]
 /// Compute a line-based diff between old and new text, returning a list of patch operations.
 /// Consecutive operations of the same type are merged to minimize payload size.
 pub fn compute_patch(old: &str, new: &str) -> Vec<PatchOp> {
