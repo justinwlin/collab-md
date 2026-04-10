@@ -113,3 +113,8 @@ jobs:
         run: |
           git tag ${{ steps.version.outputs.tag }}
           git push origin ${{ steps.version.outputs.tag }}
+
+      - name: Trigger release build
+        run: gh workflow run release.yml -f tag=${{ steps.version.outputs.tag }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
