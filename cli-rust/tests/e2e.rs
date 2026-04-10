@@ -6,6 +6,8 @@
 //! Run with: ./test_e2e.sh (starts server automatically)
 //! Or manually: cargo test --test e2e -- --nocapture
 
+use base64::prelude::*;
+use collab::crdt::CrdtDoc;
 use collab::patch::{apply_patch, compute_patch};
 use collab::phoenix::{ChannelEvent, PhoenixChannel};
 use reqwest::Client;
@@ -58,12 +60,18 @@ async fn connect_user(
         .unwrap_or_else(|e| panic!("Failed to connect as {}: {}", username, e))
 }
 
-async fn wait_for_doc_state(events: &mut mpsc::UnboundedReceiver<ChannelEvent>) -> (String, u64) {
+async fn wait_for_doc_state(
+    events: &mut mpsc::UnboundedReceiver<ChannelEvent>,
+) -> (String, u64, Vec<Vec<u8>>) {
     let timeout = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match events.recv().await {
-                Some(ChannelEvent::DocState { document, version }) => {
-                    return (document, version);
+                Some(ChannelEvent::DocState {
+                    document,
+                    version,
+                    crdt_updates,
+                }) => {
+                    return (document, version, crdt_updates);
                 }
                 Some(_) => continue,
                 None => panic!("Channel closed while waiting for doc:state"),
@@ -111,7 +119,7 @@ async fn test_websocket_join_receives_state() {
     seed_document(&client, &code, "initial content\n").await;
 
     let (_channel, mut events) = connect_user(&code, "alice").await;
-    let (doc, version) = wait_for_doc_state(&mut events).await;
+    let (doc, version, _) = wait_for_doc_state(&mut events).await;
 
     assert_eq!(doc, "initial content\n");
     assert!(version > 0);
@@ -166,7 +174,7 @@ async fn test_patch_sync_between_two_users() {
 
     // Alice joins
     let (mut alice_ch, mut alice_events) = connect_user(&code, "alice").await;
-    let (_, alice_version) = wait_for_doc_state(&mut alice_events).await;
+    let (_, alice_version, _) = wait_for_doc_state(&mut alice_events).await;
 
     // Bob joins
     let (_bob_ch, mut bob_events) = connect_user(&code, "bob").await;
@@ -223,7 +231,7 @@ async fn test_patch_version_mismatch_returns_full_state() {
     seed_document(&client, &code, "original\n").await;
 
     let (mut alice_ch, mut alice_events) = connect_user(&code, "alice").await;
-    let (_, alice_version) = wait_for_doc_state(&mut alice_events).await;
+    let (_, alice_version, _) = wait_for_doc_state(&mut alice_events).await;
 
     // Advance the version via REST so Alice's base_version becomes stale
     seed_document(&client, &code, "updated by someone else\n").await;
@@ -261,7 +269,7 @@ async fn test_multiple_sequential_patches() {
     seed_document(&client, &code, "v0\n").await;
 
     let (mut alice_ch, mut alice_events) = connect_user(&code, "alice").await;
-    let (_, mut version) = wait_for_doc_state(&mut alice_events).await;
+    let (_, mut version, _) = wait_for_doc_state(&mut alice_events).await;
 
     let (_bob_ch, mut bob_events) = connect_user(&code, "bob").await;
     wait_for_doc_state(&mut bob_events).await;
@@ -465,7 +473,7 @@ async fn test_sync_engine_local_edit_propagates() {
 
     let fp = file_path.clone();
     let sync_handle = tokio::spawn(async move {
-        collab::sync::run(fp, "sync-tester".to_string(), channel, events).await
+        collab::sync::run(fp, "sync-tester".to_string(), channel, events, true).await
     });
 
     // Wait for sync to write initial file
@@ -516,7 +524,7 @@ async fn test_sync_engine_remote_edit_updates_file() {
 
     let fp = file_path.clone();
     let sync_handle = tokio::spawn(async move {
-        collab::sync::run(fp, "sync-tester".to_string(), channel, events).await
+        collab::sync::run(fp, "sync-tester".to_string(), channel, events, true).await
     });
 
     // Wait for initial sync
@@ -549,4 +557,171 @@ async fn test_sync_engine_remote_edit_updates_file() {
 
     sync_handle.abort();
     let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+// ---------------------------------------------------------------------------
+// CRDT sync tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_crdt_update_syncs_between_users() {
+    let client = Client::new();
+    let code = create_room(&client).await;
+    seed_document(&client, &code, "hello world").await;
+
+    // Alice joins and establishes CRDT baseline
+    let (mut alice_ch, mut alice_events) = connect_user(&code, "alice").await;
+    wait_for_doc_state(&mut alice_events).await;
+
+    let alice_doc = CrdtDoc::from_text("hello world");
+    let init_state = alice_doc.encode_state();
+    alice_ch
+        .send_crdt_update(&init_state, "hello world", "alice")
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drain_events(&mut alice_events);
+
+    // Bob joins — should receive CRDT state
+    let (_bob_ch, mut bob_events) = connect_user(&code, "bob").await;
+    let (_, _, bob_crdt_updates) = wait_for_doc_state(&mut bob_events).await;
+    assert!(
+        !bob_crdt_updates.is_empty(),
+        "Bob should receive CRDT state"
+    );
+
+    // Bob initializes from CRDT state
+    let bob_doc = CrdtDoc::from_updates(&bob_crdt_updates).unwrap();
+    assert_eq!(bob_doc.get_text(), "hello world");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drain_events(&mut alice_events);
+    drain_events(&mut bob_events);
+
+    // Alice makes a CRDT edit
+    let update = alice_doc.apply_local_change("hello world", "hello beautiful world");
+    alice_ch
+        .send_crdt_update(&update, &alice_doc.get_text(), "alice")
+        .unwrap();
+
+    // Bob should receive the CRDT update
+    let event = tokio::time::timeout(Duration::from_secs(5), bob_events.recv())
+        .await
+        .expect("Timeout")
+        .expect("Closed");
+
+    match event {
+        ChannelEvent::CrdtUpdate {
+            update: recv_update,
+            author,
+            ..
+        } => {
+            assert_eq!(author, "alice");
+            let result = bob_doc.apply_remote_update(&recv_update).unwrap();
+            assert_eq!(result, "hello beautiful world");
+        }
+        other => panic!("Expected CrdtUpdate, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_crdt_concurrent_edits_merge() {
+    let client = Client::new();
+    let code = create_room(&client).await;
+    seed_document(&client, &code, "hello world").await;
+
+    // Alice joins and establishes CRDT baseline
+    let (mut alice_ch, mut alice_events) = connect_user(&code, "alice").await;
+    wait_for_doc_state(&mut alice_events).await;
+
+    let origin_doc = CrdtDoc::from_text("hello world");
+    let init_state = origin_doc.encode_state();
+    alice_ch
+        .send_crdt_update(&init_state, "hello world", "alice")
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drain_events(&mut alice_events);
+
+    // Bob joins and gets CRDT state
+    let (mut bob_ch, mut bob_events) = connect_user(&code, "bob").await;
+    let (_, _, bob_crdt_updates) = wait_for_doc_state(&mut bob_events).await;
+
+    // Both create docs from the shared CRDT state
+    let alice_doc = CrdtDoc::from_updates(&bob_crdt_updates).unwrap();
+    let bob_doc = CrdtDoc::from_updates(&bob_crdt_updates).unwrap();
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    drain_events(&mut alice_events);
+    drain_events(&mut bob_events);
+
+    // Alice: "hello world" -> "hello beautiful world"
+    let alice_update = alice_doc.apply_local_change("hello world", "hello beautiful world");
+    alice_ch
+        .send_crdt_update(&alice_update, &alice_doc.get_text(), "alice")
+        .unwrap();
+
+    // Bob: "hello world" -> "hello world!" (concurrent)
+    let bob_update = bob_doc.apply_local_change("hello world", "hello world!");
+    bob_ch
+        .send_crdt_update(&bob_update, &bob_doc.get_text(), "bob")
+        .unwrap();
+
+    // Wait for both updates to propagate
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Collect and apply received updates
+    while let Ok(event) = alice_events.try_recv() {
+        if let ChannelEvent::CrdtUpdate { update, .. } = event {
+            let _ = alice_doc.apply_remote_update(&update);
+        }
+    }
+    while let Ok(event) = bob_events.try_recv() {
+        if let ChannelEvent::CrdtUpdate { update, .. } = event {
+            let _ = bob_doc.apply_remote_update(&update);
+        }
+    }
+
+    // Both must converge with both edits present
+    let alice_text = alice_doc.get_text();
+    let bob_text = bob_doc.get_text();
+    assert_eq!(
+        alice_text, bob_text,
+        "CRDT docs must converge after concurrent edits"
+    );
+    assert!(alice_text.contains("beautiful"), "Should contain Alice's edit: {}", alice_text);
+    assert!(alice_text.contains("!"), "Should contain Bob's edit: {}", alice_text);
+}
+
+#[tokio::test]
+async fn test_crdt_state_persists_for_new_joiners() {
+    let client = Client::new();
+    let code = create_room(&client).await;
+
+    // Alice joins, creates CRDT, makes multiple edits
+    let (mut alice_ch, mut alice_events) = connect_user(&code, "alice").await;
+    wait_for_doc_state(&mut alice_events).await;
+
+    let alice_doc = CrdtDoc::from_text("");
+    let update1 = alice_doc.apply_local_change("", "line 1\n");
+    alice_ch
+        .send_crdt_update(&update1, &alice_doc.get_text(), "alice")
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let update2 = alice_doc.apply_local_change("line 1\n", "line 1\nline 2\n");
+    alice_ch
+        .send_crdt_update(&update2, &alice_doc.get_text(), "alice")
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Bob joins late — should get accumulated CRDT state
+    let (_bob_ch, mut bob_events) = connect_user(&code, "bob").await;
+    let (doc_text, _, crdt_updates) = wait_for_doc_state(&mut bob_events).await;
+
+    assert_eq!(doc_text, "line 1\nline 2\n");
+    assert!(!crdt_updates.is_empty(), "Should have CRDT updates");
+
+    let bob_doc = CrdtDoc::from_updates(&crdt_updates).unwrap();
+    assert_eq!(bob_doc.get_text(), "line 1\nline 2\n");
 }

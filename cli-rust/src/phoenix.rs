@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,7 @@ pub enum ChannelEvent {
     DocState {
         document: String,
         version: u64,
+        crdt_updates: Vec<Vec<u8>>,
     },
     DocChange {
         document: String,
@@ -35,6 +37,11 @@ pub enum ChannelEvent {
     },
     DocPatch {
         ops: Vec<PatchOp>,
+        author: String,
+        version: u64,
+    },
+    CrdtUpdate {
+        update: Vec<u8>,
         author: String,
         version: u64,
     },
@@ -77,13 +84,9 @@ impl PhoenixChannel {
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded_channel::<Message>();
         let (event_tx, event_rx) = mpsc::unbounded_channel::<ChannelEvent>();
 
-        // Spawn write loop
         tokio::spawn(write_loop(write, outgoing_rx));
-
-        // Spawn read loop
         tokio::spawn(read_loop(read, event_tx));
 
-        // Spawn heartbeat sender
         let hb_tx = outgoing_tx.clone();
         tokio::spawn(heartbeat_loop(hb_tx));
 
@@ -96,7 +99,6 @@ impl PhoenixChannel {
             ref_counter: 1,
         };
 
-        // Join the channel
         channel.send_raw(PhxMessage {
             topic: topic.to_string(),
             event: "phx_join".to_string(),
@@ -121,7 +123,7 @@ impl PhoenixChannel {
         Ok(())
     }
 
-    /// Send a full document update (fallback when patches aren't applicable).
+    /// Send a full document update (fallback for non-CRDT updates).
     pub fn send_update(
         &mut self,
         document: &str,
@@ -140,7 +142,7 @@ impl PhoenixChannel {
         })
     }
 
-    /// Send a diff patch to the server.
+    /// Send a diff patch to the server (legacy, kept for compatibility).
     pub fn send_patch(
         &mut self,
         ops: &[PatchOp],
@@ -155,6 +157,27 @@ impl PhoenixChannel {
                 "ops": ops,
                 "author": author,
                 "base_version": base_version,
+            }),
+            msg_ref: Some(msg_ref),
+            join_ref: Some(self.join_ref.clone()),
+        })
+    }
+
+    /// Send a CRDT binary update to the server.
+    pub fn send_crdt_update(
+        &mut self,
+        update: &[u8],
+        text: &str,
+        author: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let msg_ref = self.next_ref();
+        self.send_raw(PhxMessage {
+            topic: self.topic.clone(),
+            event: "doc:crdt_update".to_string(),
+            payload: serde_json::json!({
+                "update": BASE64_STANDARD.encode(update),
+                "text": text,
+                "author": author,
             }),
             msg_ref: Some(msg_ref),
             join_ref: Some(self.join_ref.clone()),
@@ -228,7 +251,22 @@ fn parse_event(msg: &PhxMessage) -> Option<ChannelEvent> {
         "doc:state" => {
             let document = msg.payload.get("document")?.as_str()?.to_string();
             let version = msg.payload.get("version")?.as_u64()?;
-            Some(ChannelEvent::DocState { document, version })
+            let crdt_updates = msg
+                .payload
+                .get("crdt_updates")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .filter_map(|s| BASE64_STANDARD.decode(s).ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(ChannelEvent::DocState {
+                document,
+                version,
+                crdt_updates,
+            })
         }
         "doc:change" => {
             let document = msg.payload.get("document")?.as_str()?.to_string();
@@ -236,6 +274,17 @@ fn parse_event(msg: &PhxMessage) -> Option<ChannelEvent> {
             let version = msg.payload.get("version")?.as_u64()?;
             Some(ChannelEvent::DocChange {
                 document,
+                author,
+                version,
+            })
+        }
+        "doc:crdt_update" => {
+            let update_b64 = msg.payload.get("update")?.as_str()?;
+            let update = BASE64_STANDARD.decode(update_b64).ok()?;
+            let author = msg.payload.get("author")?.as_str()?.to_string();
+            let version = msg.payload.get("version")?.as_u64()?;
+            Some(ChannelEvent::CrdtUpdate {
+                update,
                 author,
                 version,
             })
@@ -271,7 +320,6 @@ fn parse_event(msg: &PhxMessage) -> Option<ChannelEvent> {
                 });
             }
 
-            // Check for patch version mismatch
             if status == "ok" && response.get("version_mismatch").is_some() {
                 let document = response.get("document")?.as_str()?.to_string();
                 let version = response.get("version")?.as_u64()?;

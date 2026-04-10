@@ -9,7 +9,7 @@ name = "collab"
 path = "src/lib.rs"
 
 [[bin]]
-name = "collab"
+name = "collabmd"
 path = "src/main.rs"
 
 [dependencies]
@@ -22,6 +22,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 futures-util = "0.3"
+yrs = "0.21"
+base64 = "0.22"
 
 [profile.release]
 strip = true

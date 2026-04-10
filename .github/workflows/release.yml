@@ -17,16 +17,16 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            binary: collab-linux-x86_64
+            binary: collabmd-linux-x86_64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            binary: collab-linux-aarch64
+            binary: collabmd-linux-aarch64
           - target: x86_64-apple-darwin
             os: macos-latest
-            binary: collab-darwin-x86_64
+            binary: collabmd-darwin-x86_64
           - target: aarch64-apple-darwin
             os: macos-latest
-            binary: collab-darwin-aarch64
+            binary: collabmd-darwin-aarch64
 
     runs-on: ${{ matrix.os }}
     defaults:
@@ -54,7 +54,7 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Package binary
-        run: cp target/${{ matrix.target }}/release/collab ../${{ matrix.binary }}
+        run: cp target/${{ matrix.target }}/release/collabmdmd ../${{ matrix.binary }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -74,7 +74,7 @@ jobs:
       - name: Flatten artifacts
         run: |
           mkdir -p release
-          find artifacts -type f -name 'collab-*' -exec cp {} release/ \;
+          find artifacts -type f -name 'collabmd-*' -exec cp {} release/ \;
           chmod +x release/*
 
       - name: Create GitHub Release

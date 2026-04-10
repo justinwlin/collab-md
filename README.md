@@ -17,32 +17,32 @@ Or build from source (requires [Rust](https://rustup.rs)):
 ```sh
 git clone https://github.com/justinwlin/collab-md.git
 cd collab-md/cli-rust
-cargo install --path .
+cargo install --path . --bin collabmd
 ```
 
 ### Use It
 
 ```sh
 # Create a room
-collab create --name alice
+collabmd create --name alice
 
 # Share the code with someone else
-collab join abc123 --name bob
+collabmd join abc123 --name bob
 
 # Sync an existing file
-collab create --name alice --file notes.md
+collabmd create --name alice --file notes.md
 
 # View version history
-collab history abc123
+collabmd history abc123
 
 # Restore a previous version
-collab restore abc123 2
+collabmd restore abc123 2
 
 # Check who's online
-collab status abc123
+collabmd status abc123
 
 # Uninstall
-collab uninstall
+collabmd uninstall
 ```
 
 Edit the synced file with any editor (VS Code, vim, nano, etc). Changes propagate instantly to all connected users.
@@ -57,11 +57,11 @@ To use a different server, pass `--server` or set the environment variable:
 
 ```sh
 # Per-command
-collab create --name alice --server https://your-server.com
+collabmd create --name alice --server https://your-server.com
 
 # Or set globally
 export COLLAB_SERVER=https://your-server.com
-collab create --name alice
+collabmd create --name alice
 ```
 
 ## Self-Hosting
@@ -177,7 +177,7 @@ cd cli-rust && cargo test --lib
 ## Uninstall
 
 ```sh
-collab uninstall
+collabmd uninstall
 ```
 
-Or manually: `rm ~/.local/bin/collab`
+Or manually: `rm ~/.local/bin/collabmd`

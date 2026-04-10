@@ -30,30 +30,30 @@ case "$ARCH" in
         ;;
 esac
 
-BINARY="collab-${OS}-${ARCH}"
+BINARY="collabmd-${OS}-${ARCH}"
 URL="https://github.com/${REPO}/releases/latest/download/${BINARY}"
 
-echo "==> Installing collab for ${OS}/${ARCH}..."
+echo "==> Installing collabmd for ${OS}/${ARCH}..."
 mkdir -p "$INSTALL_DIR"
 
 # Download binary
 if command -v curl >/dev/null 2>&1; then
-    HTTP_CODE=$(curl -sSL -w '%{http_code}' "$URL" -o "${INSTALL_DIR}/collab")
+    HTTP_CODE=$(curl -sSL -w '%{http_code}' "$URL" -o "${INSTALL_DIR}/collabmd")
     if [ "$HTTP_CODE" != "200" ]; then
-        rm -f "${INSTALL_DIR}/collab"
+        rm -f "${INSTALL_DIR}/collabmd"
         echo "Error: Download failed (HTTP $HTTP_CODE)"
         echo "No release found. You can build from source instead:"
         echo "  git clone https://github.com/${REPO}.git"
-        echo "  cd collab-md/cli-rust && cargo install --path ."
+        echo "  cd collab-md/cli-rust && cargo install --path . --bin collabmd"
         exit 1
     fi
 elif command -v wget >/dev/null 2>&1; then
-    wget -q "$URL" -O "${INSTALL_DIR}/collab" || {
-        rm -f "${INSTALL_DIR}/collab"
+    wget -q "$URL" -O "${INSTALL_DIR}/collabmd" || {
+        rm -f "${INSTALL_DIR}/collabmd"
         echo "Error: Download failed."
         echo "No release found. You can build from source:"
         echo "  git clone https://github.com/${REPO}.git"
-        echo "  cd collab-md/cli-rust && cargo install --path ."
+        echo "  cd collab-md/cli-rust && cargo install --path . --bin collabmd"
         exit 1
     }
 else
@@ -61,11 +61,11 @@ else
     exit 1
 fi
 
-chmod +x "${INSTALL_DIR}/collab"
+chmod +x "${INSTALL_DIR}/collabmd"
 
 # Verify the binary runs
-if "${INSTALL_DIR}/collab" --version >/dev/null 2>&1; then
-    VERSION=$("${INSTALL_DIR}/collab" --version 2>/dev/null || echo "unknown")
+if "${INSTALL_DIR}/collabmd" --version >/dev/null 2>&1; then
+    VERSION=$("${INSTALL_DIR}/collabmd" --version 2>/dev/null || echo "unknown")
     echo "==> Installed: $VERSION"
 else
     echo "==> Binary installed (could not verify version)"
@@ -74,11 +74,11 @@ fi
 # Check if INSTALL_DIR is in PATH
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
-        echo "==> Ready! Run 'collab --help' to get started."
+        echo "==> Ready! Run 'collabmd --help' to get started."
         ;;
     *)
         echo ""
-        echo "==> Installed to ${INSTALL_DIR}/collab"
+        echo "==> Installed to ${INSTALL_DIR}/collabmd"
         echo ""
         echo "Add this directory to your PATH:"
         echo ""
@@ -101,9 +101,9 @@ case ":${PATH}:" in
                 ;;
         esac
         echo ""
-        echo "Then run: collab --help"
+        echo "Then run: collabmd --help"
         ;;
 esac
 
 echo ""
-echo "To uninstall: collab uninstall"
+echo "To uninstall: collabmd uninstall"

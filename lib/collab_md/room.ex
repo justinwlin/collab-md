@@ -78,6 +78,19 @@ defmodule CollabMd.Room do
     GenServer.cast(via(code), {:leave, username})
   end
 
+  @doc "Stores a CRDT update (opaque binary) and updates the plain text document."
+  @spec apply_crdt_update(String.t(), binary(), String.t(), String.t()) ::
+          {:ok, non_neg_integer()}
+  def apply_crdt_update(code, update_binary, text, author) do
+    GenServer.call(via(code), {:apply_crdt_update, update_binary, text, author})
+  end
+
+  @doc "Returns the list of accumulated CRDT updates (chronological order)."
+  @spec get_crdt_state(String.t()) :: {:ok, list(binary())}
+  def get_crdt_state(code) do
+    GenServer.call(via(code), :get_crdt_state)
+  end
+
   @doc "Returns a summary of current room state."
   @spec status(String.t()) :: {:ok, map()}
   def status(code) do
@@ -95,6 +108,7 @@ defmodule CollabMd.Room do
       document: "",
       versions: [],
       version_count: 0,
+      crdt_updates: [],
       users: MapSet.new(),
       created_at: DateTime.utc_now(),
       idle_timer: schedule_timeout(@default_timeout_ms)
@@ -127,9 +141,36 @@ defmodule CollabMd.Room do
       |> Map.put(:document, content)
       |> Map.put(:versions, new_versions)
       |> Map.put(:version_count, new_version_number)
+      |> Map.put(:crdt_updates, [])
       |> reset_timer(@default_timeout_ms)
 
     {:reply, {:ok, new_version_number}, state}
+  end
+
+  def handle_call({:apply_crdt_update, update_binary, text, author}, _from, state) do
+    new_version_number = state.version_count + 1
+
+    snapshot = %{
+      number: new_version_number,
+      content: text,
+      author: author,
+      timestamp: DateTime.utc_now()
+    }
+
+    state =
+      state
+      |> Map.put(:document, text)
+      |> Map.put(:versions, [snapshot | state.versions])
+      |> Map.put(:version_count, new_version_number)
+      |> Map.update!(:crdt_updates, &[update_binary | &1])
+      |> reset_timer(@default_timeout_ms)
+
+    {:reply, {:ok, new_version_number}, state}
+  end
+
+  def handle_call(:get_crdt_state, _from, state) do
+    state = reset_timer(state, @default_timeout_ms)
+    {:reply, {:ok, Enum.reverse(state.crdt_updates)}, state}
   end
 
   def handle_call(:get_versions, _from, state) do

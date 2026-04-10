@@ -1,12 +1,13 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod crdt;
 mod patch;
 mod phoenix;
 mod sync;
 
 #[derive(Parser)]
-#[command(name = "collab", about = "Live collaborative markdown editing", version)]
+#[command(name = "collabmd", about = "Live collaborative markdown editing", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -24,6 +25,10 @@ enum Commands {
         #[arg(long)]
         file: Option<String>,
 
+        /// Sync mode: "crdt" (auto-merge concurrent edits) or "overwrite" (last save wins)
+        #[arg(long, default_value = "crdt")]
+        mode: String,
+
         /// Server URL
         #[arg(long, env = "COLLAB_SERVER", default_value = "https://collab-md.fly.dev")]
         server: String,
@@ -40,6 +45,10 @@ enum Commands {
         /// File to sync to
         #[arg(long)]
         file: Option<String>,
+
+        /// Sync mode: "crdt" (auto-merge concurrent edits) or "overwrite" (last save wins)
+        #[arg(long, default_value = "crdt")]
+        mode: String,
 
         /// Server URL
         #[arg(long, env = "COLLAB_SERVER", default_value = "https://collab-md.fly.dev")]
@@ -78,6 +87,17 @@ enum Commands {
     Uninstall,
 }
 
+fn parse_mode(mode: &str) -> bool {
+    match mode {
+        "crdt" | "merge" => true,
+        "overwrite" | "lww" => false,
+        _ => {
+            eprintln!("Warning: unknown mode '{}', defaulting to crdt", mode);
+            true
+        }
+    }
+}
+
 fn default_username() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
@@ -89,13 +109,20 @@ async fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Create { name, file, server } => cmd_create(&server, &name, file.as_deref()).await,
+        Commands::Create { name, file, mode, server } => {
+            let use_crdt = parse_mode(&mode);
+            cmd_create(&server, &name, file.as_deref(), use_crdt).await
+        }
         Commands::Join {
             code,
             name,
             file,
+            mode,
             server,
-        } => cmd_join(&server, &code, &name, file.as_deref()).await,
+        } => {
+            let use_crdt = parse_mode(&mode);
+            cmd_join(&server, &code, &name, file.as_deref(), use_crdt).await
+        }
         Commands::History { code, server } => cmd_history(&server, &code).await,
         Commands::Restore {
             code,
@@ -116,6 +143,7 @@ async fn cmd_create(
     server: &str,
     name: &str,
     file: Option<&str>,
+    use_crdt: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     let resp = client
@@ -133,7 +161,7 @@ async fn cmd_create(
         .ok_or("Invalid response: missing code")?;
 
     eprintln!("Room created: {}", code);
-    eprintln!("Share this code: collab join {} --name <name>", code);
+    eprintln!("Share this code: collabmd join {} --name <name>", code);
     eprintln!();
 
     // Seed room with existing file content
@@ -155,7 +183,7 @@ async fn cmd_create(
         }
     }
 
-    cmd_join(server, code, name, file).await
+    cmd_join(server, code, name, file, use_crdt).await
 }
 
 async fn cmd_join(
@@ -163,6 +191,7 @@ async fn cmd_join(
     code: &str,
     name: &str,
     file: Option<&str>,
+    use_crdt: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let file_path = match file {
         Some(f) => PathBuf::from(f),
@@ -174,8 +203,10 @@ async fn cmd_join(
         std::env::current_dir()?.join(file_path)
     };
 
+    let mode_label = if use_crdt { "crdt (auto-merge)" } else { "overwrite (last save wins)" };
     eprintln!("Joining room {} as {}...", code, name);
     eprintln!("Syncing to: {}", file_path.display());
+    eprintln!("Mode: {}", mode_label);
     eprintln!("Edit the file with any editor. Changes sync automatically.");
     eprintln!("Press Ctrl+C to leave.");
     eprintln!();
@@ -183,7 +214,7 @@ async fn cmd_join(
     let topic = format!("room:{}", code);
     let (channel, events) = phoenix::PhoenixChannel::connect(server, name, &topic).await?;
 
-    sync::run(file_path, name.to_string(), channel, events)
+    sync::run(file_path, name.to_string(), channel, events, use_crdt)
         .await
         .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
 
@@ -246,7 +277,7 @@ async fn cmd_uninstall() -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?;
     eprintln!("Removing {}...", exe.display());
     std::fs::remove_file(&exe)?;
-    eprintln!("collab has been uninstalled.");
+    eprintln!("collabmd has been uninstalled.");
     Ok(())
 }
 

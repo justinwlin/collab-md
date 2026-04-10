@@ -22,9 +22,12 @@ defmodule CollabMdWeb.RoomChannel do
     {:ok, document} = Room.get_document(code)
     {:ok, status} = Room.status(code)
 
+    {:ok, crdt_updates} = Room.get_crdt_state(code)
+
     push(socket, "doc:state", %{
       "document" => document,
-      "version" => status.version
+      "version" => status.version,
+      "crdt_updates" => Enum.map(crdt_updates, &Base.encode64/1)
     })
 
     broadcast!(socket, "user:joined", %{
@@ -42,6 +45,20 @@ defmodule CollabMdWeb.RoomChannel do
 
     broadcast_from!(socket, "doc:change", %{
       "document" => content,
+      "author" => author,
+      "version" => version
+    })
+
+    {:reply, {:ok, %{"version" => version}}, socket}
+  end
+
+  def handle_in("doc:crdt_update", %{"update" => update_b64, "text" => text, "author" => author}, socket) do
+    code = socket.assigns.code
+    update_binary = Base.decode64!(update_b64)
+    {:ok, version} = Room.apply_crdt_update(code, update_binary, text, author)
+
+    broadcast_from!(socket, "doc:crdt_update", %{
+      "update" => update_b64,
       "author" => author,
       "version" => version
     })

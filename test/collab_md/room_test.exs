@@ -204,6 +204,39 @@ defmodule CollabMd.RoomTest do
     end
   end
 
+  describe "apply_crdt_update/4" do
+    test "stores CRDT update and updates document text", %{code: code} do
+      {:ok, version} = Room.apply_crdt_update(code, <<1, 2, 3>>, "new text", "alice")
+      assert version == 1
+      assert {:ok, "new text"} = Room.get_document(code)
+    end
+
+    test "accumulates CRDT updates", %{code: code} do
+      Room.apply_crdt_update(code, <<1>>, "v1", "alice")
+      Room.apply_crdt_update(code, <<2>>, "v2", "alice")
+      {:ok, updates} = Room.get_crdt_state(code)
+      assert length(updates) == 2
+      assert updates == [<<1>>, <<2>>]
+    end
+
+    test "creates version snapshots", %{code: code} do
+      Room.apply_crdt_update(code, <<1>>, "v1", "alice")
+      Room.apply_crdt_update(code, <<2>>, "v2", "bob")
+      {:ok, versions} = Room.get_versions(code)
+      assert length(versions) == 2
+    end
+
+    test "plain update_document clears CRDT state", %{code: code} do
+      Room.apply_crdt_update(code, <<1>>, "crdt text", "alice")
+      {:ok, updates_before} = Room.get_crdt_state(code)
+      assert length(updates_before) == 1
+
+      Room.update_document(code, "plain update", "bob")
+      {:ok, updates_after} = Room.get_crdt_state(code)
+      assert updates_after == []
+    end
+  end
+
   describe "status/1" do
     test "returns created_at timestamp", %{code: code} do
       {:ok, %{created_at: created_at}} = Room.status(code)

@@ -75,6 +75,39 @@ defmodule CollabMdWeb.RoomChannelTest do
     assert_reply ref, :error, %{"reason" => _}
   end
 
+  test "doc:crdt_update broadcasts to others and stores state", %{socket: socket, code: code} do
+    update_b64 = Base.encode64(<<1, 2, 3, 4>>)
+
+    ref =
+      push(socket, "doc:crdt_update", %{
+        "update" => update_b64,
+        "text" => "crdt synced text",
+        "author" => "alice"
+      })
+
+    assert_reply ref, :ok, %{"version" => version}
+    assert is_integer(version)
+
+    assert_broadcast "doc:crdt_update", %{
+      "update" => ^update_b64,
+      "author" => "alice",
+      "version" => ^version
+    }
+
+    # Verify document text was updated
+    assert {:ok, "crdt synced text"} = CollabMd.Room.get_document(code)
+
+    # Verify CRDT state was stored
+    {:ok, updates} = CollabMd.Room.get_crdt_state(code)
+    assert length(updates) == 1
+  end
+
+  test "doc:state includes crdt_updates", %{socket: _socket, code: code} do
+    CollabMd.Room.apply_crdt_update(code, <<10, 20>>, "text", "setup")
+    assert_push "doc:state", %{"crdt_updates" => crdt_updates}
+    assert is_list(crdt_updates)
+  end
+
   test "doc:patch updates server document state", %{socket: socket, code: code} do
     CollabMd.Room.update_document(code, "old\n", "setup")
 
