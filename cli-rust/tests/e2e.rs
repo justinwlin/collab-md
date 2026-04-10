@@ -476,20 +476,23 @@ async fn test_sync_engine_local_edit_propagates() {
     // Edit the local file
     tokio::fs::write(&file_path, "initial\nedited locally\n").await.unwrap();
 
-    // Wait for the change to propagate to the server
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-
-    let resp = client
-        .get(format!("{}/api/rooms/{}/document", server_url(), &code))
-        .send()
-        .await
-        .unwrap();
-    let body: Value = resp.json().await.unwrap();
-    assert_eq!(
-        body["document"].as_str().unwrap(),
-        "initial\nedited locally\n",
-        "Local edit should propagate to server"
-    );
+    // Poll server until the change propagates (CI runners can be slow)
+    let expected = "initial\nedited locally\n";
+    let mut propagated = false;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let resp = client
+            .get(format!("{}/api/rooms/{}/document", server_url(), &code))
+            .send()
+            .await
+            .unwrap();
+        let body: Value = resp.json().await.unwrap();
+        if body["document"].as_str().unwrap_or("") == expected {
+            propagated = true;
+            break;
+        }
+    }
+    assert!(propagated, "Local edit should propagate to server within 10s");
 
     sync_handle.abort();
     let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -530,14 +533,19 @@ async fn test_sync_engine_remote_edit_updates_file() {
         .await
         .unwrap();
 
-    // Wait for the broadcast to reach our sync engine and write the file
-    tokio::time::sleep(Duration::from_millis(1000)).await;
-
-    let content = tokio::fs::read_to_string(&file_path).await.unwrap();
-    assert_eq!(
-        content, "initial\nremote edit\n",
-        "Remote edit should be written to local file"
-    );
+    // Poll file until the remote edit lands (CI runners can be slow)
+    let expected = "initial\nremote edit\n";
+    let mut received = false;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Ok(content) = tokio::fs::read_to_string(&file_path).await {
+            if content == expected {
+                received = true;
+                break;
+            }
+        }
+    }
+    assert!(received, "Remote edit should be written to local file within 10s");
 
     sync_handle.abort();
     let _ = std::fs::remove_dir_all(&tmp_dir);
