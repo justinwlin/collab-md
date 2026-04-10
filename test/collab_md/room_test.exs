@@ -1,13 +1,12 @@
 defmodule CollabMd.RoomTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias CollabMd.Room
 
   setup do
-    # Start the registry for tests (application.ex will do this in prod)
-    start_supervised!({Registry, keys: :unique, name: CollabMd.RoomRegistry})
+    # Registry is started globally by the application supervision tree.
     code = "test#{System.unique_integer([:positive])}"
-    {:ok, _pid} = Room.start_link(%{code: code})
+    start_supervised!({Room, %{code: code}})
     %{code: code}
   end
 

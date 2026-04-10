@@ -9,11 +9,9 @@ defmodule CollabMd.Application do
   def start(_type, _args) do
     children = [
       CollabMdWeb.Telemetry,
-      {DNSCluster, query: Application.get_env(:collab_md, :dns_cluster_query) || :ignore},
+      {Registry, keys: :unique, name: CollabMd.RoomRegistry},
+      {CollabMd.RoomSupervisor, []},
       {Phoenix.PubSub, name: CollabMd.PubSub},
-      # Start a worker by calling: CollabMd.Worker.start_link(arg)
-      # {CollabMd.Worker, arg},
-      # Start to serve requests, typically the last entry
       CollabMdWeb.Endpoint
     ]
 
