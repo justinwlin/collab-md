@@ -13,7 +13,7 @@ defmodule CollabCli do
   end
 
   defp server_url do
-    System.get_env("COLLAB_SERVER") || "http://localhost:4000"
+    System.get_env("COLLAB_SERVER") || "https://collab-md.fly.dev"
   end
 
   defp parse_opts(args, defaults \\ %{}) do
@@ -177,7 +177,7 @@ defmodule CollabCli do
       --file PATH      Local file path (default: collab-CODE.md)
 
     Environment:
-      COLLAB_SERVER    Server URL (default: http://localhost:4000)
+      COLLAB_SERVER    Server URL (default: https://collab-md.fly.dev)
     """)
   end
 end
